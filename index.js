@@ -1,10 +1,11 @@
 const express = require('express')
 const app = express()
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 require('dotenv').config()
 const cors = require('cors')
 
 
-// const jwt = require('jsonwebtoken')
 
 const port = process.env.PORT || 5000
 
@@ -35,6 +36,67 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
+
+
+    const usersCollection = client.db('mobileService').collection('users');
+
+
+
+
+
+//register related
+    app.post('/api/register', async (req, res) => {
+      const { name, pin, mobile, email } = req.body;
+    
+      try {
+        const hashedPin = await bcrypt.hash(pin, 10);
+        const newUser = { name, pin: hashedPin, mobile, email, status: 'pending', role: 'user' };
+    
+        await usersCollection.insertOne(newUser);
+        res.status(201).send('User registered successfully');
+      } catch (error) {
+        console.error(error);
+        res.status(500).send('Registration failed');
+      }
+    });
+
+
+    //login related
+
+    app.post('/login', async (req, res) => {
+      console.log(req.body);
+      const { identifier, pin } = req.body;
+    
+      try {
+        // Validate identifier and pin
+        if (!identifier || !pin) {
+          return res.status(400).json({ error: 'Identifier and PIN are required' });
+        }
+    
+        // Example MongoDB query to find user
+        const user = await usersCollection.findOne({
+          $or: [{ mobile: identifier }, { email: identifier }]
+        });
+    
+        if (!user) {
+          return res.status(400).json({ error: 'User not found' });
+        }
+    
+        // Compare hashed pin
+        const isMatch = await bcrypt.compare(pin, user.pin);
+        if (!isMatch) {
+          return res.status(400).json({ error: 'Invalid PIN' });
+        }
+    
+        // Generate JWT token
+        const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    
+        res.json({ token });
+      } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Server error' });
+      }
+    });
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
