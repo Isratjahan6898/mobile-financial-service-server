@@ -1,135 +1,109 @@
-const express = require('express')
-const app = express()
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcrypt');
+const { MongoClient } = require('mongodb');
+require('dotenv').config();
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-require('dotenv').config()
-const cors = require('cors')
 
+const app = express();
+const port = process.env.PORT || 5000;
 
+// Middleware
+app.use(cors());
+app.use(express.json());
 
-const port = process.env.PORT || 5000
-
-// middleware
-const corsOptions = {
-  origin: ['http://localhost:5173', 'http://localhost:5174'],
-  credentials: true,
-  optionSuccessStatus: 200,
-}
-app.use(cors(corsOptions))
-
-app.use(express.json())
-
-
-
-
-const { MongoClient, ServerApiVersion } = require('mongodb');
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.kowhoxx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
-});
+// MongoDB Connection URL
+const uri = process.env.MONGODB_URI;
+const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
 
 async function run() {
   try {
+    // Connect to MongoDB
+    await client.connect();
+    console.log("Connected to MongoDB");
 
+    const db = client.db('job-task');
+    const collection = db.collection('users');
 
-    const usersCollection = client.db('mobileService').collection('users');
+    // User Registration
+    app.post('/register', async (req, res) => {
+      const { name, email, pin, mobile } = req.body;
 
-
-
-
-
-//register related
-    app.post('/api/register', async (req, res) => {
-      const { name, pin, mobile, email } = req.body;
-    
-      try {
-        const hashedPin = await bcrypt.hash(pin, 10);
-        const newUser = { name, pin: hashedPin, mobile, email, status: 'pending', role: 'user' };
-    
-        await usersCollection.insertOne(newUser);
-        res.status(201).send('User registered successfully');
-      } catch (error) {
-        console.error(error);
-        res.status(500).send('Registration failed');
+      // Check if email already exists
+      const existingUser = await collection.findOne({ $or: [{ email }, { mobile }] });
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message: 'User already exists'
+        });
       }
+
+      // Hash the pin
+      const hashedPin = await bcrypt.hash(pin, 10);
+
+      // Insert user into the database
+      await collection.insertOne({
+        name,
+        email,
+        mobile,
+        hashedPin,
+        status: 'pending',
+        role: 'user'
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'User registered successfully'
+      });
+    });
+
+    // User Login
+    app.post('/login', async (req, res) => {
+      const { emailOrMobile, pin } = req.body;
+
+      // Find user by email or mobile
+      const user = await collection.findOne({
+        $or: [{ email: emailOrMobile }, { mobile: emailOrMobile }]
+      });
+      if (!user) {
+        return res.status(401).json({ message: 'user not found' });
+      }
+
+      // Compare hashed pin
+      const isPinValid = await bcrypt.compare(pin, user.hashedPin);
+      if (!isPinValid) {
+        return res.status(401).json({ message: 'Invalid pin' });
+      }
+
+      // Generate JWT token
+      const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: process.env.EXPIRES_IN });
+
+      res.json({
+        success: true,
+        message: 'Login successful',
+        token
+      });
     });
 
 
-    //login related
+    
 
-    app.post('/login', async (req, res) => {
-      const { identifier, pin } = req.body;
+    // Start the server
+    app.listen(port, () => {
+      console.log(`Server is running on http://localhost:${port}`);
+    });
 
-      try {
-          // Validate identifier and pin
-          if (!identifier || !pin) {
-              return res.status(400).json({ error: 'Identifier and PIN are required' });
-          }
-
-          // Find user by mobile or email
-          const user = await usersCollection.findOne({
-              $or: [{ mobile: identifier }, { email: identifier }]
-          });
-
-          if (!user) {
-              return res.status(400).json({ error: 'User not found' });
-          }
-
-          // Log the user and received pin
-          console.log('User found:', user);
-          console.log('Received PIN:', pin);
-
-          // Compare hashed pin
-          const isMatch = await bcrypt.compare(pin, user.pin);
-          console.log('Is PIN match:', isMatch);
-
-          if (!isMatch) {
-              return res.status(400).json({ error: 'Invalid PIN' });
-          }
-
-          // Generate JWT token
-          const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-          res.json({ token });
-      } catch (error) {
-          console.error('Login error:', error);
-          res.status(500).json({ error: 'Server error' });
-      }
-  });
-
-
-  //get all users
-
-    // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
   }
 }
+
 run().catch(console.dir);
 
-
-
-//1mphrO6icxpK6C3v
-//mobileSevice
-
-
-
+// Test route
 app.get('/', (req, res) => {
-    res.send('Hello from mobile financial service..')
-  })
-  
-  app.listen(port, () => {
-    console.log(`mobile financial service is running on port ${port}`)
-  })
-  
+  const serverStatus = {
+    message: 'Server is running smoothly',
+    timestamp: new Date()
+  };
+  res.json(serverStatus);
+});
